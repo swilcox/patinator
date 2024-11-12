@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::types::{VersionResponse, VersionInfo};
 use anyhow::{Result, Context};
 use chrono::Utc;
+use chrono_humanize::HumanTime;
 use std::time::Duration;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
@@ -82,7 +83,7 @@ impl VersionChecker {
                                     service_tags: service_tags.clone(),
                                     env_name: env.name.clone(),
                                     version: version_response.version,
-                                    deployment_time: version_response.deployment_time,
+                                    deployment_datetime: version_response.deploy_datetime,
                                 })
                             })
                         })
@@ -137,9 +138,9 @@ impl VersionChecker {
             }
 
             print!("  {}: v{}", info.env_name, info.version);
-            if let Some(deploy_time) = info.deployment_time {
-                let duration = Utc::now().signed_duration_since(deploy_time);
-                print!(" (deployed {} days ago)", duration.num_days());
+            if let Some(deploy_datetime) = info.deployment_datetime {
+                let duration = deploy_datetime.signed_duration_since(Utc::now());
+                print!(" (deployed {})", HumanTime::from(duration));
             }
             println!();
         }

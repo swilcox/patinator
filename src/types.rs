@@ -19,7 +19,7 @@ pub struct Environment {
 pub struct VersionResponse {
     pub version: String,
     #[serde(default)]
-    pub deployment_time: Option<DateTime<Utc>>,
+    pub deploy_datetime: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]
@@ -28,7 +28,7 @@ pub struct VersionInfo {
     pub service_tags: Vec<String>,
     pub env_name: String,
     pub version: String,
-    pub deployment_time: Option<DateTime<Utc>>,
+    pub deployment_datetime: Option<DateTime<Utc>>,
 }
 
 impl PartialOrd for VersionInfo {
