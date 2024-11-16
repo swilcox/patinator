@@ -1,8 +1,7 @@
 use crate::config::Config;
-use crate::types::{VersionResponse, VersionInfo};
-use anyhow::{Result, Context};
-use chrono::Utc;
-use chrono_humanize::HumanTime;
+use crate::types::*;
+use anyhow::{Result, Context, anyhow};
+use chrono::{DateTime, Utc};
 use std::time::Duration;
 use futures::future::join_all;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
@@ -25,7 +24,6 @@ impl VersionChecker {
     }
 
     pub async fn check_all(&self) -> Result<()> {
-        // Create progress bars
         let multi_progress = MultiProgress::new();
         let total_checks = self.config.services.iter()
             .map(|s| s.environments.len())
@@ -38,7 +36,6 @@ impl VersionChecker {
                 .progress_chars("#>-")
         );
 
-        // Create service-specific progress trackers
         let mut service_progress = HashMap::new();
         for service in &self.config.services {
             let service_bar = multi_progress.add(ProgressBar::new(service.environments.len() as u64));
@@ -60,11 +57,11 @@ impl VersionChecker {
                 let service = service.clone();
                 let main_progress = main_progress.clone();
                 let service_progress = service_progress.get(&service.name).unwrap().clone();
+                let defaults = self.config.defaults.clone();
 
                 tokio::spawn(async move {
                     let mut version_infos = Vec::new();
 
-                    // Process environments in parallel
                     let env_futures: Vec<JoinHandle<Result<VersionInfo>>> = service
                         .environments
                         .iter()
@@ -73,9 +70,11 @@ impl VersionChecker {
                             let env = env.clone();
                             let service_name = service.name.clone();
                             let service_tags = service.tags.clone();
+                            let service = service.clone();
+                            let defaults = defaults.clone();
                             
                             tokio::spawn(async move {
-                                let version_response = fetch_version(&client, &env.url).await
+                                let version_response = fetch_version_info(&client, &service, &env, &defaults).await
                                     .with_context(|| format!("Failed to fetch version for {}/{}", service_name, env.name))?;
                                 
                                 Ok(VersionInfo {
@@ -83,13 +82,12 @@ impl VersionChecker {
                                     service_tags: service_tags.clone(),
                                     env_name: env.name.clone(),
                                     version: version_response.version,
-                                    deployment_datetime: version_response.deploy_datetime,
+                                    deployment_time: version_response.deployment_time,
                                 })
                             })
                         })
                         .collect();
 
-                    // Wait for all environment checks to complete
                     let results = join_all(env_futures).await;
                     for result in results {
                         match result {
@@ -107,7 +105,6 @@ impl VersionChecker {
             })
             .collect();
 
-        // Collect all results
         let mut all_version_infos = Vec::new();
         let results = join_all(version_futures).await;
         for result in results {
@@ -118,14 +115,16 @@ impl VersionChecker {
             }
         }
 
-        // Sort all results by service name and then environment name
         all_version_infos.sort();
 
-        // Finish progress bars
+        // Clear progress bars
         main_progress.finish_and_clear();
         for bar in service_progress.values() {
             bar.finish_and_clear();
         }
+
+        // Drop the MultiProgress before printing results
+        drop(multi_progress);
 
         // Print results
         let mut current_service = String::new();
@@ -138,9 +137,9 @@ impl VersionChecker {
             }
 
             print!("  {}: v{}", info.env_name, info.version);
-            if let Some(deploy_datetime) = info.deployment_datetime {
-                let duration = deploy_datetime.signed_duration_since(Utc::now());
-                print!(" (deployed {})", HumanTime::from(duration));
+            if let Some(deploy_time) = info.deployment_time {
+                let duration = Utc::now().signed_duration_since(deploy_time);
+                print!(" (deployed {} days ago)", duration.num_days());
             }
             println!();
         }
@@ -149,8 +148,38 @@ impl VersionChecker {
     }
 }
 
-async fn fetch_version(client: &reqwest::Client, url: &str) -> Result<VersionResponse> {
-    let response = client.get(url).send().await?;
-    let version_info = response.json().await?;
-    Ok(version_info)
+async fn fetch_version_info(
+    client: &reqwest::Client, 
+    service: &Service, 
+    env: &Environment,
+    defaults: &FieldDefaults
+) -> Result<VersionResponse> {
+    let response = client.get(&env.url).send().await?;
+    let dynamic_response: DynamicVersionResponse = response.json().await?;
+    
+    // Determine field names to use
+    let version_field = service.field_mappings.version_field
+        .as_ref()
+        .unwrap_or(&defaults.version_field);
+        
+    let deploy_time_field = service.field_mappings.deploy_time_field
+        .as_ref()
+        .unwrap_or(&defaults.deploy_time_field);
+
+    // Extract version
+    let version = dynamic_response.fields.get(version_field)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("Missing or invalid version field: {}", version_field))?
+        .to_string();
+
+    // Extract deployment time if present
+    let deployment_time = dynamic_response.fields.get(deploy_time_field)
+        .and_then(|v| v.as_str())
+        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
+    Ok(VersionResponse {
+        version,
+        deployment_time,
+    })
 }

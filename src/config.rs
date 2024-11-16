@@ -1,10 +1,12 @@
 use serde::Deserialize;
 use std::path::Path;
 use anyhow::Result;
-use crate::types::Service;
+use crate::types::{Service, FieldDefaults};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    #[serde(default)]
+    pub defaults: FieldDefaults,
     pub services: Vec<Service>,
 }
 
