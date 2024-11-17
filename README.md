@@ -2,6 +2,8 @@
 
 A Rust CLI tool for tracking software versions across multiple environments. Like patina forms on copper over time, Patinator helps you monitor how your services age and change across environments.
 
+![patinator_logo](./docs/patinator_intro.jpg)
+
 ## Features
 
 - Parallel version checking of multiple services and environments
